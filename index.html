@@ -1245,7 +1245,8 @@ class Pet {
   next(){
     while (this.queue && this.queue.length){ if (runItem(this, this.queue.shift())) return; }
     if (!D.roam){ this.setAct(this.actName==='idle' && Math.random()<.25 ? pick(['wag','sit','idle']) : 'idle'); return; }
-    const W = [['walk',30],['idle',16],['sit',9],['wag',6],['sleep',3],['jump',4],['spin',4],['bark',5],['roll',3],['bow',4],['dance',2],['shake',3],['dig',3],['scratch',4],['beg',3],['zoomies',2],['lie',4],['sniff',5],['look',4],['tilt',3],['stretch',3],['bounce',2],['wiggle',2],['howl',1],['sneeze',1],['wave',1],['pounce',2]];
+    let W = [['walk',30],['idle',16],['sit',9],['wag',6],['sleep',3],['jump',4],['spin',4],['bark',5],['roll',3],['bow',4],['dance',2],['shake',3],['dig',3],['scratch',4],['beg',3],['zoomies',2],['lie',4],['sniff',5],['look',4],['tilt',3],['stretch',3],['bounce',2],['wiggle',2],['howl',1],['sneeze',1],['wave',1],['pounce',2]];
+    if (KIND_ACTS[this.d.kind]) W = W.concat(KIND_ACTS[this.d.kind]);
     let tot = W.reduce((s,w)=>s+w[1],0), r = Math.random()*tot;
     for (const [n,w] of W){ if ((r-=w) < 0){ this.setAct(n === this.actName && n!=='walk' ? 'walk' : n); return; } }
   }
@@ -1474,6 +1475,75 @@ const ACTIONS = {
 const MENU = ['wag','sit','lie','beg','wave','jump','bounce','flip','spin','roll','dead','bow','stretch','dance','wiggle','moonwalk','pounce','zoomies','walk','shake','dig','scratch','sniff','sleep'];
 const MOODS = ['bark','howl','nod','no','tilt','look','love','sad','surprise','sneeze'];
 
+/* ---------- extra moves & reactions for the farm and wild animals ---------- */
+const _v = new THREE.Vector3();
+const wpos = (o, dy=0) => o.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, dy, 0));
+const fwd = (p, d) => { if (!p.locked){ p.x += Math.sin(p.heading)*d; p.z += Math.cos(p.heading)*d; } };
+const frontPt = (p, f=.45 + p.L*1.3) => new THREE.Vector3(p.x + Math.sin(p.heading)*f, 0, p.z + Math.cos(p.heading)*f);
+function dropProp(p){ if (p.prop){ p.prop.parent && p.prop.parent.remove(p.prop); p.prop = null; } }
+function grassTuft(p){ const g = new THREE.Group(), fp = frontPt(p); for (let i=0;i<7;i++){ const c = mk(G_CONE, lam(i%2 ? 0x5fb84a : 0x3f9a35), false, false); c.scale.set(.05, rand(.22,.34), .05); c.position.set(rand(-.14,.14), .12, rand(-.1,.1)); c.rotation.z = rand(-.3,.3); g.add(c); } g.position.copy(fp); scene.add(g); return g; }
+function bambooProp(p){ const g = new THREE.Group(), H = p.H; for (let i=0;i<3;i++){ g.add(m3(G_CYL, lam(i%2 ? 0x7fbf4a : 0x6aaa3a), H*.07, H*.5, H*.07, 0, (i-1)*H*.52, 0)); g.add(m3(G_CYL, lam(0x5a8a2a), H*.085, H*.05, H*.085, 0, (i-.5)*H*.52, 0)); }
+  for (const s of [-1,1]){ const l = m3(SPH, lam(0x8bd450), H*.06, H*.25, H*.02, s*H*.15, H*.85, 0); l.rotation.z = s*.7; g.add(l); } g.position.set(H*.15, -H*.45, p.nosePos.z - H*.1); g.rotation.set(.3, 0, -1.2); p.head.add(g); return g; }
+function puffs(pos, color, n, size=.12, rise=1.2){ for (let i=0;i<n;i++){ const m = mk(SPH_LO, lam(color), false, false); m.scale.setScalar(size*rand(.7,1.3)); m.position.copy(pos).add(new THREE.Vector3(rand(-.15,.15), rand(-.05,.1), rand(-.15,.15))); scene.add(m);
+  parts.push({ m, v:new THREE.Vector3(rand(-.3,.3), rise*rand(.6,1), rand(-.3,.3)), life:rand(.8,1.4), s:m.scale.x, g:-.5, grow:true }); } }
+function mudPuddle(x, z){ const m = new THREE.Mesh(CIRC, new THREE.MeshLambertMaterial({ color:0x6a4a2a, transparent:true, opacity:0, depthWrite:false })); m.rotation.x = -Math.PI/2; m.position.set(x,.013,z); m.scale.set(.9,.7,1); scene.add(m); holes.push({ m, t:0, big:true }); }
+const A2 = {
+  graze:   { label:'Graze', dur:[3.5,4.5], start:p=>{ dropProp(p); p.prop = grassTuft(p); }, end:dropProp,
+             tick:(p,t)=>{ if (p.prop) p.prop.scale.setScalar(Math.max(.15, 1 - t/4)); },
+             pose:(p,t)=>{ const pp = p.d.neckLen ? .35 : .25; return { pitch:pp, drop:p.standDrop(pp), hx:(p.d.neckLen ? 1.3 : .85) + Math.sin(t*6)*.07, mouth:Math.abs(Math.sin(t*7))*.55, tailWag:Math.sin(t*2)*.35, ear:Math.sin(t*1.3)*.15, fl:.1, fr:-.05 }; } },
+  reach:   { label:'Eat leaves', dur:[3.5,4], tick:(p,t,dt)=>{ if (Math.random() < dt*3) burst(wpos(p.head, p.H*1.4), pick([0x5fb84a,0x8bd450]), 1, .05, .4); },
+             pose:(p,t)=>{ const pp = -.22; return { pitch:pp, drop:p.standDrop(pp), hx:-1.1 + Math.sin(t*5)*.05, hy:Math.sin(t*.8)*.25, mouth:Math.abs(Math.sin(t*6))*.6, y:.04+Math.abs(Math.sin(t*1.5))*.03, tailWag:Math.sin(t*3)*.3, ear:.2 }; } },
+  buck:    { label:'Buck kick', dur:[2.2,2.2], snap:true, tick:(p,t)=>{ const k = Math.floor(t/1.1); if (k !== p.tk && t%1.1 > .25){ p.tk = k; sfx('whoosh', p); if (k===0) fxSay(p, voice(p)); burst(wpos(p.hip, -p.baseHipY + .05), env.def.dirt, 4, .05, 1.6); } },
+             pose:(p,t)=>{ const ph = (t%1.1)/1.1, k = Math.sin(clamp((ph-.15)/.55,0,1)*Math.PI); return { pitch:.45*k, drop:p.standDrop(.45*k), fl:-.45*k, fr:-.45*k, bl:1.25*k, br:1.15*k, y:.12*k, earB:.8*k, tailUp:.6*k, tailWag:Math.sin(t*20)*.4*k, hx:-.3*k, mouth:.5*k, eyes:k>.3?'closed':'open' }; } },
+  stomp:   { label:'Stomp', dur:[2,2.4], snap:true, tick:(p,t)=>{ const k = Math.floor(t*3); if (k !== p.tk && (t*3)%1 > .5){ p.tk = k; sfx('thud', p); const pos = wpos(p.legs.fr, -p.legLen); pos.y = .05; burst(pos, env.def.dirt, 4, .04, 1.4); } },
+             pose:(p,t)=>{ const up = Math.max(0, Math.sin(t*3*Math.PI)); return { fr:-.9*up, hx:.15, ear:-.1, earB:.4, tailWag:Math.sin(t*9)*.4, mouth:.15, roll:-.04*up }; } },
+  headbutt:{ label:'Headbutt', dur:[1.6,1.6], snap:true, tick:(p,t,dt)=>{ if (t>.35 && t<.6) fwd(p, 3.2*dt); if (t>.6 && p.tk<0){ p.tk=1; sfx('thud', p); burst(wpos(p.head).add(new THREE.Vector3(Math.sin(p.heading)*.4,0,Math.cos(p.heading)*.4)), 0xfff0a0, 8, .04, 2.2); } if (t>.65 && t<.85) fwd(p, -1.2*dt); },
+             pose:(p,t)=>{ const c = smooth(0,.35,t)*(1-smooth(.9,1.4,t)), hit = t>.6 && t<.8; return { pitch:.2*c, drop:p.standDrop(.2*c), hx:.65*c, earB:.7*c, fl:hit?-.2:.25*Math.sin(t*20)*c*(t<.6?1:0), y:hit?.05:0, eyes:hit?'closed':'open', sq:hit?.08:0, tailUp:.3*c }; } },
+  pronk:   { label:'Pronk', dur:[2.4,2.4], snap:true, tick:(p,t)=>{ const k = Math.floor(t/.42); if (k !== p.tk){ p.tk = k; sfx('hop', p); } },
+             pose:(p,t)=>{ const h = Math.abs(Math.sin(t/.42*Math.PI)); return { y:h*.55, sq:(1-h)*.06, fl:0, fr:0, bl:0, br:0, pitch:Math.sin(t/.42*Math.PI*2)*.06, ear:.6*h, tailUp:.4, tailWag:Math.sin(t*20)*.3, eyes:'happy', mouth:.5 }; } },
+  neckswing:{ label:'Neck sway', dur:[3.5,4], tick:(p,t)=>{ const k = Math.floor(t/.9); if (k!==p.tk){ p.tk=k; fxFloat(p,'note','note'); } },
+             pose:(p,t)=>{ const s = Math.sin(t*2.2); return { hy:s*.85, hz:s*.45, roll:s*.07, wiggle:-s*.08, hx:-.15, eyes:'happy', mouth:.35, tailWag:s*.6, ear:.2 }; } },
+  mudroll: { label:'Mud bath', dur:[4.5,5.5], start:p=>{ const f = frontPt(p, 0); mudPuddle(f.x, f.z); }, tick:(p,t,dt)=>{ if (t>.5 && Math.random()<dt*14) burst(new THREE.Vector3(p.x+rand(-.3,.3),.1,p.z+rand(-.3,.3)), 0x6a4a2a, 1, .06, 2); if (t>.5 && Math.floor(t/.8)!==p.tk){ p.tk = Math.floor(t/.8); sfx('dig', p); } },
+             pose:(p,t)=>{ const k = smooth(0,.5,t)*(1-smooth(4.2,4.8,t)), r = Math.sin(t*4)*1.0*k; return { drop:p.lieDrop*k, roll:r, fl:-p.lieAng*k - Math.abs(r)*.5, fr:-p.lieAng*k - Math.abs(r)*.5, bl:p.lieAng*k + Math.abs(r)*.4, br:p.lieAng*k + Math.abs(r)*.4, eyes:'happy', mouth:.6, tailWag:Math.sin(t*12)*.6, hx:.1 }; } },
+  root:    { label:'Root around', dur:[3,4], tick:(p,t,dt)=>{ if (Math.random()<dt*10) burst(frontPt(p, .3 + p.L*1.2).setY(.08), env.def.dirt, 1, .05, 1.8); if (Math.floor(t/.5)!==p.tk){ p.tk=Math.floor(t/.5); sfx('sniff', p); } },
+             pose:(p,t)=>{ const pp = .3; return { pitch:pp, drop:p.standDrop(pp), hx:.75 + Math.sin(t*9)*.08, hy:Math.sin(t*4)*.35, y:Math.abs(Math.sin(t*9))*.02, tailWag:Math.sin(t*10)*.6, tailUp:.4, ear:Math.sin(t*8)*.15, mouth:.2 }; } },
+  dive:    { label:'Snow dive', dur:[2.6,2.6], snap:true, tick:(p,t,dt)=>{ if (t>.6 && t<1.15) fwd(p, 2.4*dt); if (t>1.15 && p.tk<0){ p.tk=1; sfx('thud', p); const f = frontPt(p, .3 + p.L*1.2); f.y = .1; burst(f, env.def.id==='snow' ? 0xffffff : env.def.dirt, 10, .06, 2.6); } },
+             pose:(p,t)=>{ const cr = t<.6 ? smooth(0,.3,t) : 0, a = clamp((t-.6)/.55,0,1), air = t>.6 && t<1.15, h = air ? Math.sin(a*Math.PI)*.9 : 0, stuck = t>1.15 && t<2.1 ? 1 : (t>=2.1 ? 1-smooth(2.1,2.5,t) : 0), w = Math.sin(t*26)*cr;
+               return { pitch:.25*cr + (air ? .6*a : 0) + 1.05*stuck, drop:p.standDrop(.25)*cr, y:h + stuck*.15, roll:w*.1, fl:-.6*cr - .9*(air?1:0) - .4*stuck, fr:-.6*cr - .9*(air?1:0) - .4*stuck, bl:air ? .8 : .5*stuck, br:air ? .8 : .5*stuck, hx:-.3*cr + .4*stuck, tailUp:.6, tailWag:stuck ? Math.sin(t*18)*.8 : w, ear:.6*(air?1:0), eyes:stuck ? 'closed' : 'open' }; } },
+  ballroll:{ label:'Roll like a ball', dur:[2.4,2.4], snap:true, tick:(p,t,dt)=>{ if (t>.4 && t<2) fwd(p, 1.6*dt); if (Math.floor(t/.5)!==p.tk && t>.4){ p.tk=Math.floor(t/.5); sfx('hop', p); } },
+             pose:(p,t)=>{ const k = smooth(0,.35,t)*(1-smooth(2.05,2.4,t)), f = smooth(.35,2.05,t)*TAU*2; return { drop:-p.baseHipY*k, y:p.R*.95*k, flip:f, fl:-1.6*k, fr:-1.6*k, bl:1.5*k, br:1.5*k, hx:.7*k, tailUp:-.5*k, eyes:'happy', mouth:.4 }; } },
+  bamboo:  { label:'Munch bamboo', dur:[4,5], start:p=>{ dropProp(p); p.prop = bambooProp(p); }, end:dropProp,
+             pose:(p,t)=>Object.assign(sitPose(p,t), { fl:-.9, fr:-1.1, hx:-.05 + Math.sin(t*6)*.04, hy:0, hz:Math.sin(t*1.3)*.12, mouth:Math.abs(Math.sin(t*7))*.55, eyes:Math.sin(t*.9)>.6 ? 'happy' : 'open', tailWag:0 }) },
+  wash:    { label:'Wash paws', dur:[3,3.5], tick:(p,t,dt)=>{ if (Math.random()<dt*8) burst(wpos(p.legs.fr, -p.legLen*.6), env.def.drop, 1, .03, 1); },
+             pose:(p,t)=>Object.assign(sitPose(p,t), { fl:-1.45 + Math.sin(t*16)*.18, fr:-1.45 - Math.sin(t*16)*.18, hx:.35, hy:0, hz:Math.sin(t*3)*.1, eyes:'open', mouth:.2, tailWag:Math.sin(t*4)*.3 }) },
+  spray:   { label:'Stink cloud', dur:[3,3], snap:true, tick:(p,t,dt)=>{ if (t>.8 && t<2.4 && Math.random()<dt*14) puffs(wpos(p.tail, .2), pick([0x9acd50,0xb8dd70,0x7fb840]), 1, .14, .9); if (t>.85 && p.tk<0){ p.tk=1; fxSay(p, 'Phew!'); } },
+             pose:(p,t)=>{ const k = smooth(0,.6,t)*(1-smooth(2.5,3,t)), pp = .9*k; return { pitch:pp, drop:p.standDrop(pp), y:.32*k, fl:-pp*.9, fr:-pp*.9, bl:1.3*k, br:1.3*k, hx:-pp*.7 - .1, tailUp:1.0*k, tailWag:Math.sin(t*10)*.5*k, eyes:'happy', mouth:.3 }; } },
+  chew:    { label:'Chew', dur:[3,4], pose:(p,t)=>({ mouth:.15 + Math.max(0,Math.sin(t*5))*.4, hz:Math.sin(t*2.5)*.07, hy:Math.sin(t*.7)*.2, hx:.05, eyes:Math.sin(t*1.1)>.7 ? 'closed' : 'open', tailWag:Math.sin(t*1.5)*.3, ear:Math.sin(t*.9)*.15 }) },
+  // reactions
+  laugh:   { label:'Laugh', dur:[2.2,2.6], start:p=>fxSay(p, pick(['Haha!','Hehe!','LOL!'])), tick:(p,t)=>{ if (t>1.2 && p.tk<0){ p.tk=1; fxSay(p, 'Haha!'); } },
+             pose:(p,t)=>({ y:Math.abs(Math.sin(t*10))*.06, hx:-.3 + Math.sin(t*20)*.06, mouth:.95, eyes:'happy', ear:.3, tailWag:Math.sin(t*20)*.7, roll:Math.sin(t*10)*.05 }) },
+  angry:   { label:'Angry', dur:[2.4,2.8], start:p=>fxSay(p, pick(['Hmph!','Grr!','Rude!'])), tick:(p,t,dt)=>{ if (Math.random()<dt*6) puffs(wpos(p.head, p.H*.9), 0xf2f2f2, 1, .09, 1.5); },
+             pose:(p,t)=>({ roll:Math.sin(t*30)*.05, pitch:.08, drop:p.standDrop(.08), hx:.3, earB:1, ear:-.2, mouth:0, tailWag:0, tailUp:-.2, fl:Math.max(0,Math.sin(t*6))*-.25 }) },
+  cry:     { label:'Cry', dur:[3,3.5], start:p=>{ fxSay(p, 'Waaah!'); sfx('sad', p); }, tick:(p,t,dt)=>{ if (Math.random()<dt*10) for (const e of p.eyes){ const pos = e.g.getWorldPosition(new THREE.Vector3()); pos.y -= p.H*.1; burst(pos, 0x6fc6ff, 1, .03, .6); } },
+             pose:(p,t)=>Object.assign(sitPose(p,t), { hx:.5, hy:0, hz:Math.sin(t*6)*.05, ear:-.3, earB:.4, tailWag:0, tailUp:-1, eyes:'closed', mouth:.45 + Math.sin(t*12)*.1, sq:Math.sin(t*12)*.02 }) },
+  scared:  { label:'Scared', dur:[2.4,2.8], snap:true, start:p=>{ fxFloat(p,'!','q'); sfx('surprise', p); }, tick:(p,t,dt)=>{ if (t<.35) fwd(p, -2.2*dt); },
+             pose:(p,t)=>{ const j = t<.35 ? Math.sin(t/.35*Math.PI) : 0, sh = t>.35 ? 1 : 0; return { y:j*.35, roll:Math.sin(t*42)*.06*sh, sq:Math.sin(t*42)*.02*sh, pitch:-.1, drop:p.standDrop(-.1) - .04*sh, earB:1, ear:-.3, tailUp:-1.1, tailWag:0, hx:-.15, mouth:.3, eyes:'open' }; } },
+  shy:     { label:'Shy', dur:[2.6,3], start:p=>fxFloat(p,'heart','heart'),
+             pose:(p,t)=>Object.assign(sitPose(p,t), { hy:.75, hz:.3, hx:.35, fr:-1.7, ear:-.15, eyes:'happy', tailWag:Math.sin(t*5)*.35, mouth:0 }) },
+  excited: { label:'Excited', dur:[2.4,2.8], snap:true, tick:(p,t,dt)=>{ if (Math.random()<dt*10) burst(wpos(p.head, p.H*.6), pick([0xfff0a0,0xffd23d,0xffffff]), 1, .035, 2.2); if (Math.floor(t/.35)!==p.tk){ p.tk = Math.floor(t/.35); sfx('hop', p); } },
+             pose:(p,t)=>({ y:Math.abs(Math.sin(t*9))*.16, wiggle:Math.sin(t*18)*.1, tailWag:Math.sin(t*26)*.9, tailUp:.4, ear:.5, eyes:'happy', mouth:.8, fl:-Math.abs(Math.sin(t*9))*.4, fr:-Math.abs(Math.sin(t*9+1))*.4 }) },
+  proud:   { label:'Proud', dur:[2.8,3.2], start:p=>fxSay(p, pick(['Ta-da!','Nailed it.','*poses*'])), tick:(p,t,dt)=>{ if (Math.random()<dt*4) burst(wpos(p.head, p.H*1.2), 0xfff0a0, 1, .035, 1.2); },
+             pose:(p,t)=>Object.assign(sitPose(p,t), { pitch:-.75, drop:p.frontDrop(-.75), fl:.75, fr:.75, hx:-.5, hy:0, hz:.12, eyes:'closed', mouth:.25, tailWag:Math.sin(t*3)*.4, ear:.25 }) },
+  nope:    { label:'Nope!', dur:[2.4,2.8], start:p=>fxSay(p, pick(['Nope!','No way.','Not moving!'])),
+             pose:(p,t)=>{ const e = Math.sin(Math.PI*clamp(t/2.6,0,1)); return { pitch:-.14, drop:p.standDrop(-.14), fl:.35, fr:.35, bl:-.15, br:-.15, hy:Math.sin(t*10)*.5*e, hx:-.1, earB:.9, ear:-.2, mouth:0, tailWag:Math.sin(t*14)*.3, eyes:'open' }; } },
+};
+const MENU2 = ['graze','chew','buck','stomp','headbutt','pronk','mudroll','root','reach','neckswing','dive','ballroll','bamboo','wash','spray'];
+const MOODS2 = ['laugh','angry','cry','scared','shy','excited','proud','nope'];
+const KIND_ACTS = { cow:[['graze',14],['chew',10],['stomp',3]], sheep:[['graze',14],['pronk',5],['headbutt',3]], donkey:[['graze',10],['buck',4],['nope',4],['stomp',3]], giraffe:[['reach',14],['neckswing',6],['graze',3]],
+  pig:[['root',10],['mudroll',5],['excited',3]], fox:[['dive',6],['pounce',4],['laugh',2]], panda:[['bamboo',10],['ballroll',5],['lie',5]], raccoon:[['wash',9],['root',3]], skunk:[['spray',4],['proud',3]], bunny:[['pronk',5]] };
+
+Object.assign(ACTIONS, A2);
+
 /* ---------- particles, holes, treats ---------- */
 const parts = [];
 function burst(pos, color, n, size=.05, speed=2.5, back=0){
@@ -1593,7 +1663,7 @@ const ICONS = {
 };
 const ic = (n, cls='i') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n]||''}</svg>`;
 const fxIcon = (n, size) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" style="fill:none;stroke:currentColor;stroke-width:2"><style>.f{fill:currentColor;stroke:none}</style>${ICONS[n]}</svg>`;
-const ACT_ICON = { lie:'lie', wave:'wave', bounce:'bounce', flip:'flip', dead:'dead', stretch:'stretch', wiggle:'wiggle', moonwalk:'moonwalk', pounce:'pounce', sniff:'sniff', howl:'howl', nod:'nod', no:'no', tilt:'tilt', look:'eye', love:'heartO', sad:'sad', surprise:'surprise', sneeze:'sneeze', wag:'wag', sit:'sit', beg:'beg', jump:'jump', spin:'spin', bark:'bark', dance:'dance', roll:'roll', bow:'bow', shake:'shake', dig:'dig', scratch:'scratch', zoomies:'zoomies', sleep:'sleep', walk:'walk' };
+const ACT_ICON = { graze:'leaf', chew:'bark', buck:'boot', stomp:'boot', headbutt:'zoomies', pronk:'bounce', mudroll:'roll', root:'dig', reach:'tree', neckswing:'wiggle', dive:'pounce', ballroll:'roll', bamboo:'flower', wash:'shake', spray:'sneeze', laugh:'face', angry:'flame', cry:'shake', scared:'surprise', shy:'heartO', excited:'sparkle', proud:'sparkle', nope:'no', lie:'lie', wave:'wave', bounce:'bounce', flip:'flip', dead:'dead', stretch:'stretch', wiggle:'wiggle', moonwalk:'moonwalk', pounce:'pounce', sniff:'sniff', howl:'howl', nod:'nod', no:'no', tilt:'tilt', look:'eye', love:'heartO', sad:'sad', surprise:'surprise', sneeze:'sneeze', wag:'wag', sit:'sit', beg:'beg', jump:'jump', spin:'spin', bark:'bark', dance:'dance', roll:'roll', bow:'bow', shake:'shake', dig:'dig', scratch:'scratch', zoomies:'zoomies', sleep:'sleep', walk:'walk' };
 
 /* ---------- screen fx ---------- */
 const fxLayer = $('#fx'), fxList = [];
@@ -1662,10 +1732,10 @@ function addPet(d){
   scene.add(p.root, p.blob, p.lockRing, p.pathViz); pets.push(p); p.apply('open', 0);
   return p;
 }
-function removePet(p){ (p.labels||[]).forEach(el=>el.remove()); scene.remove(p.root, p.blob, p.lockRing, p.pathViz); const i = pets.indexOf(p); if (i>=0) pets.splice(i,1); if (selected===p) select(null); }
+function removePet(p){ dropProp(p); (p.labels||[]).forEach(el=>el.remove()); scene.remove(p.root, p.blob, p.lockRing, p.pathViz); const i = pets.indexOf(p); if (i>=0) pets.splice(i,1); if (selected===p) select(null); }
 
 /* ---------- director state ---------- */
-const D = { wslot:'head', guides:true, recPaths:true, recCount:true, recLen:0, recQ:1080, mark:'r:bark', qmode:false, tab:'act', tool:'treat', roam:true, treats:true, speed:1, camLock:false, rec:false,
+const D = { wslot:'head', guides:true, recPaths:true, recCount:true, recLen:0, recQ:1080, mark:'r:bark', qmode:false, tab:'pets', tool:'treat', roam:false, treats:true, speed:1, camLock:false, rec:false,
   text:'', style:'speech', color:0, dur:3, type:true };
 const PATH_COLORS = [0xff7a59,0x3fa9f5,0xffc23d,0xb86bff,0x2fc2a0,0xff5f9e,0x8bd450,0xffffff,0xf08a24];
 
@@ -1743,11 +1813,15 @@ function chip(label, attrs, opts={}){
   return `<button class="chip${opts.on?' on':''}${opts.go?' go':''}${opts.off?' off':''}" ${opts.disabled?'disabled':''} ${attrs}>${opts.icon?ic(opts.icon):''}${opts.dot?`<span class="dot" style="background:${opts.dot}"></span>`:''}${label}</button>`;
 }
 function buildUI(){
+  const envScroll = $('#envs').scrollLeft;
   $('#envs').innerHTML = ENVS.map(e => chip(e.label, `data-env="${e.id}"`, { icon:e.icon, on: env && env.def.id===e.id })).join('');
   $('#tabs').innerHTML = TABS.map(([id,l,i]) => `<button data-tab="${id}" class="${D.tab===id?'on':''}">${ic(i)}${l}</button>`).join('');
+  $('#envs').scrollLeft = envScroll;
   $('#clear').innerHTML = ic('x');
   renderWho(); renderPanel();
 }
+// remember sideways scroll of each chip row across re-renders
+function rowKey(r){ const b = r.querySelector('button'); if (!b) return 'empty'; const ks = Object.keys(b.dataset); return ks.join(',') + ':' + (ks.length ? b.dataset[ks[0]] : '') + (ks.includes('witem') || ks.includes('wc') || ks.includes('wa') || ks.includes('wp') ? ':' + D.wslot : '') + ':' + r.children.length; }
 function renderPanel(){
   const p = selected, P = $('#panel');
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab===D.tab));
@@ -1756,7 +1830,8 @@ function renderPanel(){
     h += `<div class="note">${p ? `Tricks for <b>${p.d.name}</b>${p.locked?' (locked: stays on the spot)':''}` : 'Tricks for <b>everyone</b>. Tap a pet to direct just one.'}</div>`;
     if (p) h += `<div class="row">${chip(D.qmode ? `Adding to queue (${p.path.after.length})` : 'Add to queue','data-cmd="qmode"',{icon:'loop',on:D.qmode})}${chip('Play queue','data-cmd="play"',{icon:'play',go:true,disabled:!hasScript(p)})}${p.act.loco ? '<span class="note" style="padding:0">Reactions play while walking</span>' : ''}</div>`;
     h += `<div class="sub">Moves</div><div class="row">${MENU.map(n => chip(ACTIONS[n].label, `data-act="${n}"`, { icon:ACT_ICON[n] })).join('')}</div>`;
-    h += `<div class="sub">Reactions</div><div class="row">${MOODS.map(n => chip(ACTIONS[n].label, `data-act="${n}"`, { icon:ACT_ICON[n] })).join('')}</div>`;
+    h += `<div class="sub">Animal moves</div><div class="row">${MENU2.map(n => chip(ACTIONS[n].label, `data-act="${n}"`, { icon:ACT_ICON[n] })).join('')}</div>`;
+    h += `<div class="sub">Reactions</div><div class="row">${MOODS2.concat(MOODS).map(n => chip(ACTIONS[n].label, `data-act="${n}"`, { icon:ACT_ICON[n] })).join('')}</div>`;
   }
   else if (D.tab==='move'){
     if (!p){ h += `<div class="note">Tap a pet first. Then you can <b>place</b> it, <b>lock</b> it to a spot, or draw a <b>path</b> from A to B (and C, D...).</div>`;
@@ -1839,15 +1914,17 @@ function renderPanel(){
     h += `<div class="note">Music and sounds are included in recorded videos. The music restarts from the beginning when a recording starts.</div>`;
     h += `<div class="sub">Speed</div><div class="row">${[[.25,'0.25x'],[.5,'0.5x'],[1,'1x'],[1.5,'1.5x']].map(([v,l])=>chip(l,`data-tspeed="${v}"`,{icon:'clock',on:D.speed===v})).join('')}</div>`;
   }
-  const st = P.scrollTop; P.innerHTML = h; P.scrollTop = st;
+  const st = P.scrollTop, saved = [...P.querySelectorAll('.row')].map(r => [rowKey(r), r.scrollLeft]);
+  P.innerHTML = h; P.scrollTop = st;
+  P.querySelectorAll('.row').forEach(r => { const m = saved.find(x => x[0] === rowKey(r)); if (m) r.scrollLeft = m[1]; });
   const inp = $('#sayIn'); if (inp){ inp.oninput = e => D.text = e.target.value; inp.onkeydown = e => { if (e.key==='Enter'){ e.preventDefault(); doSay(); inp.blur(); } }; }
 }
 function doSay(){ if (!selected || !D.text.trim()) return; say(selected, D.text.trim(), { style:D.style, color:BUB_COLORS[D.color], dur:D.dur, type:D.type }); }
 
-const HOLD = ['sit','lie','beg','sleep','look','sniff','sad','tilt','love','wag','idle','wave','dance','dig','scratch','howl','bow','wiggle','bounce','dead'];
-const OVERLAY = ['wag','bark','nod','no','tilt','look','love','sneeze','howl','surprise','sad'];
+const HOLD = ['graze','chew','bamboo','wash','reach','neckswing','cry','shy','proud','root','mudroll','laugh','angry','nope','sit','lie','beg','sleep','look','sniff','sad','tilt','love','wag','idle','wave','dance','dig','scratch','howl','bow','wiggle','bounce','dead'];
+const OVERLAY = ['laugh','angry','chew','wag','bark','nod','no','tilt','look','love','sneeze','howl','surprise','sad'];
 const OV_KEYS = ['hx','hy','hz','mouth','ear','earB','tailWag','tailUp','wiggle'];
-const PAUSE = ['sit','lie','wave','wag','beg','bark','howl','love','nod','no','tilt','look','sniff','dance','jump','bounce','flip','spin','roll','dead','bow','stretch','wiggle','shake','dig','scratch','sneeze','sleep'];
+const PAUSE = ['graze','chew','buck','stomp','headbutt','pronk','mudroll','root','reach','neckswing','dive','ballroll','bamboo','wash','spray','laugh','angry','cry','scared','shy','excited','proud','nope','sit','lie','wave','wag','beg','bark','howl','love','nod','no','tilt','look','sniff','dance','jump','bounce','flip','spin','roll','dead','bow','stretch','wiggle','shake','dig','scratch','sneeze','sleep'];
 function startOverlay(p, name, fromPath){
   const A = ACTIONS[name];
   p.overlay = { name, t:0, tk:-1, path:fromPath, dur: Array.isArray(A.dur) ? rand(A.dur[0], A.dur[1]) : 2 };
@@ -2265,6 +2342,7 @@ const SFX = {
   wiggle(t, pan){ const o = O('triangle', 700, t, .08); o.frequency.exponentialRampToValueAtTime(500, t+.07); const g = G(t, .003, .06, .06); chain(o, g); out(g, pan); },
 };
 const ACT_SFX = {
+  graze:{ every:.45, off:.2, s:'munch' }, chew:{ every:.8, off:.3, s:'munch' }, bamboo:{ every:.5, off:.3, s:'munch' }, wash:{ every:.3, off:.2, s:'scratch' }, reach:{ every:.6, off:.3, s:'munch' }, ballroll:[[.3,'whoosh']], dive:[[.6,'whoosh']], spray:[[.8,'whoosh']], laugh:{ every:.25, off:.1, s:'blip' },
   jump:{ every:.8, off:.15, s:'boing' }, bounce:{ every:Math.PI/8, off:.05, s:'hop' }, eat:{ every:.2, off:.05, s:'munch' },
   dig:{ every:.2, off:.3, s:'dig' }, scratch:{ every:.28, off:.15, s:'scratch' }, sniff:{ every:.7, off:.1, s:'sniff' }, wiggle:{ every:Math.PI/15*2, off:.1, s:'wiggle' },
   flip:[[.28,'whoosh'],[1.12,'thud']], spin:[[0,'whoosh'],[1.1,'whoosh']], roll:[[.7,'whoosh'],[2.45,'thud']], zoomies:[[0,'zoom']], shake:[[.12,'shake']],
@@ -2501,10 +2579,10 @@ addEventListener('resize', () => {
 });
 
 buildEnv(ENVS[0]);
-DEFAULT_CAST.forEach(id => addPet(DEFS.find(d=>d.id===id)));
+// the park starts empty: pets are added from the Pets tab
 pets.forEach(p => { p.pop = rand(-.8,0); p.setAct(pick(['idle','sit','wag','walk'])); });
 buildUI(); layoutGuide(); fitBounds(); renderMute();
-setTimeout(()=>hint('Tap a pet to direct it. Tap the grass to toss a treat.', 5000), 600);
+setTimeout(()=>hint('Add pets from the Pets tab below.', 5000), 600);
 
 const clock = new THREE.Clock(); let T = 0;
 function frame(){
@@ -2534,8 +2612,8 @@ function frame(){
     treat.m.position.set(treat.x, treat.y, treat.z); treat.m.rotation.y += dt*(treat.landed?1:6);
   }
   // particles
-  for (let i=parts.length-1;i>=0;i--){ const q = parts[i]; q.life -= dt; q.v.y -= 9*dt; q.m.position.addScaledVector(q.v, dt); if (q.m.position.y < .03){ q.m.position.y = .03; q.v.multiplyScalar(.3); } q.m.scale.setScalar(q.s*clamp(q.life*3,0,1)); if (q.life <= 0){ scene.remove(q.m); parts.splice(i,1); } }
-  for (let i=holes.length-1;i>=0;i--){ const h = holes[i]; h.t += dt; h.m.material.opacity = Math.min(.85, h.t*.5) * (1 - smooth(9,12,h.t)); h.m.scale.set(.32+Math.min(h.t,2)*.08, .24+Math.min(h.t,2)*.06, 1); if (h.t > 12){ scene.remove(h.m); h.m.material.dispose(); holes.splice(i,1); } }
+  for (let i=parts.length-1;i>=0;i--){ const q = parts[i]; q.life -= dt; q.v.y -= (q.g ?? 9)*dt; q.m.position.addScaledVector(q.v, dt); if (q.m.position.y < .03){ q.m.position.y = .03; q.v.multiplyScalar(.3); } q.m.scale.setScalar(q.s*clamp(q.life*3,0,1)*(q.grow ? 2 - Math.min(1, q.life) : 1)); if (q.life <= 0){ scene.remove(q.m); parts.splice(i,1); } }
+  for (let i=holes.length-1;i>=0;i--){ const h = holes[i]; h.t += dt; h.m.material.opacity = Math.min(.85, h.t*.5) * (1 - smooth(9,12,h.t)); h.m.scale.set((h.big?.9:.32)+Math.min(h.t,2)*.08, (h.big?.7:.24)+Math.min(h.t,2)*.06, 1); if (h.t > 12){ scene.remove(h.m); h.m.material.dispose(); holes.splice(i,1); } }
   // director overlays (hidden while recording)
   ring.visible = !!selected && !D.rec;
   if (selected){ ring.position.set(selected.x, .02, selected.z); const s = (selected.rad*1.1)*(1+Math.sin(T*5)*.05); ring.scale.set(s,s,s); }
