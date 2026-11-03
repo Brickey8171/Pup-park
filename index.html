@@ -68,6 +68,9 @@ svg.i .f{fill:currentColor;stroke:none}
 .say input{flex:1;min-width:0;border:2px solid #dfe6da;background:#fff;border-radius:999px;padding:9px 14px;font:500 16px Fredoka,system-ui,sans-serif;color:var(--ink);outline:none}
 .say input:focus{border-color:var(--ink)}
 .plabel{position:absolute;left:0;top:0;min-width:22px;height:22px;padding:0 5px;border-radius:11px;color:#fff;font:700 12px/22px Fredoka,system-ui,sans-serif;text-align:center;display:none;align-items:center;justify-content:center;gap:2px;box-shadow:0 2px 0 rgba(0,0,0,.2);pointer-events:none;border:2px solid #fff}
+.plabel.drag{transform-origin:center;box-shadow:0 0 0 4px rgba(255,255,255,.6),0 4px 10px rgba(0,0,0,.3)}
+.plabel.look{border-radius:50%;width:26px;height:26px;padding:0;opacity:.95}
+.xb.on{background:var(--ink);color:#fff}
 .plabel svg{width:13px;height:13px;fill:none;stroke:#fff;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
 .plabel.mk{border-radius:6px;transform-origin:center}
 .tag.mk{border-radius:7px;background:var(--accent)}
@@ -1062,6 +1065,7 @@ function sweaterTex(base, stripe, bands){
   });
 }
 
+const _HP = new THREE.Vector3();
 class Pet {
   constructor(d){
     this.d = d;
@@ -1226,6 +1230,26 @@ class Pet {
     this.pathViz = new THREE.Group();
     this.setAct('idle');
   }
+  // keeps the head (and long necks) above the grass in every pose: bend the neck first, then lift the pet if needed
+  headLow(){ this.head.getWorldPosition(_HP); return _HP.y - this.H*.85*this.root.scale.y; }
+  keepHeadUp(dt=1/60){
+    if (this.pop < .05 && !this.leaving) return;
+    const target = .03, base = this.neck.rotation.x;
+    this.root.updateMatrixWorld(true);
+    let low = this.headLow(), want = 0;
+    if (low < target){
+      let best = 0, bestLow = low;
+      for (const d of [-.35,.35,-.75,.75,-1.2,1.2]){ this.neck.rotation.x = base + d; this.neck.updateMatrixWorld(true); const l = this.headLow(); if (l > bestLow + .01){ best = d; bestLow = l; } if (l >= target) break; }
+      want = best;
+    }
+    this.neckFix = damp(this.neckFix || 0, want, 18, dt);
+    this.neck.rotation.x = base + this.neckFix; this.neck.updateMatrixWorld(true);
+    this.torso.getWorldPosition(_HP); const tl = _HP.y - this.R*.9*this.root.scale.y;
+    const l2 = Math.min(this.headLow(), tl + .02);
+    const lift = l2 < target ? target - l2 : 0;
+    this.liftFix = Math.max(lift, damp(this.liftFix || 0, lift, 10, dt));
+    if (this.liftFix > .001){ this.root.position.y += this.liftFix; this.root.updateMatrixWorld(true); }
+  }
   standDrop(p){ return -this.R*.5*(1-Math.cos(p)); }
   frontDrop(p){ const y = -this.R*.5, z = this.hz + this.L*.55; const yy = y*Math.cos(p) - z*Math.sin(p); return this.legLen - yy - this.baseHipY + .02; }
   setAct(name, opts={}){
@@ -1360,10 +1384,12 @@ function locomote(p, dt, mode){
     const tg = pts[p.pi], dx = tg.x-p.x, dz = tg.z-p.z, dist = Math.hypot(dx,dz);
     if (dist < .14){
       const arrived = p.pi; p.pi++;
-      if (p.pi >= pts.length){ if (p.path.loop) p.pi = 0; else { p.locked = true; p.overlay = null; return true; } }
+      if (p.pi >= pts.length){ if (p.path.loop) p.pi = 0; else { p.locked = true; p.overlay = null; const lk = pts[pts.length-1].look; if (lk != null) p.queue.unshift({ look:lk }); return true; } }
       if (pts[arrived].react) startOverlay(p, pts[arrived].react, false);
-      const pause = pts[arrived].pause;
-      if (pause){ p.overlay = null; p.queue.unshift(pause==='face' ? { face:1 } : pause.startsWith('wait') ? { wait:+pause.slice(4) } : pause, { resume:1 }); p.next(); }
+      const pause = pts[arrived].pause, look = pts[arrived].look, items = [];
+      if (look != null) items.push({ look });
+      if (pause) items.push(pause==='face' ? { face:1 } : pause.startsWith('wait') ? { wait:+pause.slice(4) } : pause);
+      if (items.length){ p.overlay = null; p.queue.unshift(...items, { resume:1 }); p.next(); }
       return false;
     }
     const w = tg.walk;
@@ -1732,7 +1758,7 @@ function addPet(d){
   scene.add(p.root, p.blob, p.lockRing, p.pathViz); pets.push(p); p.apply('open', 0);
   return p;
 }
-function removePet(p){ dropProp(p); (p.labels||[]).forEach(el=>el.remove()); scene.remove(p.root, p.blob, p.lockRing, p.pathViz); const i = pets.indexOf(p); if (i>=0) pets.splice(i,1); if (selected===p) select(null); }
+function removePet(p){ dropProp(p); (p.labels||[]).forEach(el=>el.remove()); (p.lookLabels||[]).forEach(el=>el.remove()); scene.remove(p.root, p.blob, p.lockRing, p.pathViz); const i = pets.indexOf(p); if (i>=0) pets.splice(i,1); if (selected===p) select(null); }
 
 /* ---------- director state ---------- */
 const D = { wslot:'head', guides:true, recPaths:true, recCount:true, recLen:0, recQ:1080, mark:'r:bark', qmode:false, tab:'pets', tool:'treat', roam:false, treats:true, speed:1, camLock:false, rec:false,
@@ -1749,6 +1775,8 @@ function updateLabels(){
       tmpV.set(q.x, .05, q.z); const [x,y] = projectTo(tmpV);
       el.style.display = 'flex'; el.style.transform = `translate(${x}px,${y}px) translate(-50%,-140%)` + (q.marker ? ' rotate(0deg)' : '');
     });
+    (p.lookLabels||[]).forEach(el => { const q = p.path.pts[+el.dataset.i]; if (!show || !q || q.look == null){ el.style.display = 'none'; return; }
+      tmpV.set(q.x + Math.sin(q.look)*LOOK_R, .05, q.z + Math.cos(q.look)*LOOK_R); const [x,y] = projectTo(tmpV); el.style.display = 'flex'; el.style.transform = `translate(${x}px,${y}px) translate(-50%,-50%)`; });
   }
 }
 function insertMarker(p, x, z){
@@ -1766,11 +1794,21 @@ function insertMarker(p, x, z){
   pts.splice(best.at, 0, m); p.path.hist = (p.path.hist||[]); p.path.hist.push(m);
   pathMarkers(p); renderPanel();
 }
+const LOOK_R = .9;
+const LOOK_ARROW = keep(new THREE.ShapeGeometry((() => { const s = new THREE.Shape(); [[-.05,.18],[.05,.18],[.05,.62],[.15,.62],[0,.88],[-.15,.62],[-.05,.62]].forEach(([x,y],i) => i ? s.lineTo(x,y) : s.moveTo(x,y)); s.closePath(); return s; })()));
 function pathMarkers(p){
-  const g = p.pathViz; while (g.children.length) { const c = g.children.pop(); c.geometry !== CIRC && c.geometry !== DIAM && c.geometry.dispose && c.geometry.dispose(); }
+  const g = p.pathViz; while (g.children.length) { const c = g.children.pop(); if (c.geometry && c.geometry !== CIRC && c.geometry !== DIAM && !c.geometry.userData.keep) c.geometry.dispose(); }
   const col = PATH_COLORS[DEFS.indexOf(p.d) % PATH_COLORS.length], pts = p.path.pts;
   const mat = new THREE.MeshBasicMaterial({ color:col, transparent:true, opacity:.95, depthWrite:false });
   (p.labels||[]).forEach(el => el.remove()); p.labels = [];
+  (p.lookLabels||[]).forEach(el => el.remove()); p.lookLabels = [];
+  pts.forEach((q, i) => {
+    if (q.look == null) return;
+    const ag = new THREE.Group(); ag.position.set(q.x, .036, q.z); ag.rotation.y = q.look;
+    const ar = new THREE.Mesh(LOOK_ARROW, new THREE.MeshBasicMaterial({ color:0xffffff, transparent:true, opacity:.95, depthWrite:false, side:THREE.DoubleSide })); ar.rotation.x = Math.PI/2; ag.add(ar);
+    const ar2 = new THREE.Mesh(LOOK_ARROW, mat); ar2.rotation.x = Math.PI/2; ar2.scale.setScalar(.72); ar2.position.set(0,.002,.08); ag.add(ar2); g.add(ag);
+    const el = document.createElement('div'); el.className = 'plabel look'; el.style.background = hex(col); el.innerHTML = ic('eye'); el.dataset.i = i; fxLayer.appendChild(el); p.lookLabels.push(el);
+  });
   let letter = 0;
   pts.forEach((q,i) => {
     const el = document.createElement('div'); el.className = 'plabel' + (q.marker ? ' mk' : ''); el.style.background = hex(col);
@@ -1838,7 +1876,7 @@ function renderPanel(){
       h += `<div class="row">${chip('Play all paths','data-cmd="playAll"',{icon:'play',go:true, disabled:!pets.some(q=>q.path.pts.length>1)})}${chip('Lock all','data-cmd="lockAll"',{icon:'lock'})}${chip('Unlock all','data-cmd="unlockAll"',{icon:'unlock'})}</div>`; }
     else {
       const n = p.path.pts.length;
-      h += `<div class="note">${D.tool==='mark' ? 'Pick what the marker does, then tap on the dotted path line between stops.' : D.tool==='place' ? 'Tap the ground to put '+p.d.name+' there.' : D.tool==='path' ? `Tap the ground to add stops. ${n===0?'First tap = start (A).':n===1?'Next tap = B.':n+' stops so far.'}` : 'Pick a tool, then tap the ground.'}</div>`;
+      h += `<div class="note">Drag a stop, a marker or ${p.d.name} to move them. Tap the eye on a stop to add a look direction, then drag the eye on the ground to aim it. ` + `${D.tool==='mark' ? 'Pick what the marker does, then tap on the dotted path line between stops.' : D.tool==='place' ? 'Tap the ground to put '+p.d.name+' there.' : D.tool==='path' ? `Tap the ground to add stops. ${n===0?'First tap = start (A).':n===1?'Next tap = B.':n+' stops so far.'}` : 'Or pick a tool, then tap the ground.'}</div>`;
       h += `<div class="row">${chip('Place','data-tool="place"',{icon:'pin',on:D.tool==='place'})}${chip('Draw path','data-tool="path"',{icon:'route',on:D.tool==='path'})}${chip('Add marker','data-tool="mark"',{icon:'pin',on:D.tool==='mark',disabled:p.path.pts.length<2})}${chip(p.locked?'Locked':'Lock here','data-cmd="lock"',{icon:p.locked?'lock':'unlock',on:p.locked})}${chip('','data-cmd="rotL" aria-label="Turn left"',{icon:'rotL'})}${chip('','data-cmd="rotR" aria-label="Turn right"',{icon:'rotR'})}${chip('Face camera','data-cmd="face"',{icon:'face'})}</div>`;
       h += `<div class="row">${chip('Play','data-cmd="play"',{icon:'play',go:true,disabled:!hasScript(p)})}${chip('Play all','data-cmd="playAll"',{icon:'play',disabled:!pets.some(hasScript)})}${['slow','walk','run'].map(s=>chip(s[0].toUpperCase()+s.slice(1),`data-speed="${s}"`,{on:p.path.speed===s})).join('')}${chip('Loop','data-cmd="loop"',{icon:'loop',on:p.path.loop})}${chip('Undo','data-cmd="undo"',{icon:'undo',disabled:!n})}${chip('Clear','data-cmd="clearPath"',{icon:'trash',disabled:!n})}</div>`;
       if (D.tool==='mark'){
@@ -1856,7 +1894,7 @@ function renderPanel(){
         let letter = 1;
         for (let i=1;i<n;i++){
           const q = p.path.pts[i], last = i===n-1 && !p.path.loop;
-          const x = `<button class="xb" data-cmd="prm" data-i="${i}" aria-label="Remove">${ic('x')}</button>`;
+          const x = (!q.react ? `<button class="xb${q.look != null ? ' on' : ''}" data-cmd="plook" data-i="${i}" aria-label="Look direction" title="Look direction">${ic('eye')}</button>` : '') + `<button class="xb" data-cmd="prm" data-i="${i}" aria-label="Remove">${ic('x')}</button>`;
           if (q.marker){
             const val = q.react ? 'r:'+q.react : 'm:'+q.pause;
             h += `<div class="stop"><span class="tag mk">${ic(markIcon(q))}</span>
@@ -1935,6 +1973,7 @@ function runItem(p, q){
   const name = typeof q === 'string' ? q : q.a;
   if (name){ p.setAct(name, { force:true, keep:true }); if (HOLD.includes(name) && p.dur > 2) p.dur = 2; return true; }
   if (q.resume){ p.locked = false; p.setAct('path', { force:true, keep:true, resume:true }); return true; }
+  if (q.look != null){ p.turnTo = q.look; const da = Math.abs(wrapA(q.look - p.heading)); p.setAct('idle', { keep:true }); p.dur = clamp(Math.log(Math.max(da,.06)/.03)/7 + .15, .4, 1.1); return true; }
   if (q.face){ p.turnTo = Math.atan2(camera.position.x-p.x, camera.position.z-p.z); const da = Math.abs(wrapA(p.turnTo - p.heading)); p.setAct('idle', { keep:true }); p.dur = clamp(Math.log(Math.max(da,.06)/.06)/7, .15, .8); return true; }
   if (q.wait){ p.setAct('idle', { keep:true }); p.dur = q.wait; return true; }
   if (q.say){ say(p, q.say, { style:q.style, color:BUB_COLORS[q.color||0], dur:q.dur, type:q.type }); p.setAct('idle', { keep:true }); p.dur = (q.type ? q.say.length/24 : 0) + .4; return true; }
@@ -2007,6 +2046,7 @@ document.addEventListener('click', e => {
     case 'playAll': playAll(); break;
     case 'loop': if (p){ p.path.loop = !p.path.loop; pathMarkers(p); } break;
     case 'undo': if (p){ const h = p.path.hist||[], last = h.pop(); const i = last ? p.path.pts.indexOf(last) : -1; if (i>=0) p.path.pts.splice(i,1); else p.path.pts.pop(); pathMarkers(p); } break;
+    case 'plook': if (p){ const q = p.path.pts[+b.dataset.i]; if (q){ if (q.look != null) delete q.look; else q.look = Math.atan2(camera.position.x - q.x, camera.position.z - q.z); pathMarkers(p); } } break;
     case 'prm': if (p){ const pts = p.path.pts, i = +b.dataset.i; pts.splice(i,1); if (i===0) while (pts.length && pts[0].marker) pts.shift(); if (pts.length && pts[0]){ delete pts[0].walk; delete pts[0].speed; } p.path.hist = (p.path.hist||[]).filter(q => pts.includes(q)); pathMarkers(p); } break;
     case 'mark': D.mark = b.dataset.v; break;
     case 'clearPath': if (p){ p.path.pts = []; p.path.hist = []; pathMarkers(p); } break;
@@ -2065,6 +2105,50 @@ function switchEnv(e){
     buildUI(); f.style.opacity = 0;
   }, 360);
 }
+
+
+/* ---------- drag stops, markers and pets (Move tab) ---------- */
+let drag = null, dragQueued = false;
+const dragPlane = new THREE.Plane(new THREE.Vector3(0,1,0), 0), dragRay = new THREE.Raycaster();
+function groundAt(e){ ndc.set(e.clientX/innerWidth*2-1, -(e.clientY/innerHeight)*2+1); dragRay.setFromCamera(ndc, camera); const v = new THREE.Vector3(); return dragRay.ray.intersectPlane(dragPlane, v) ? v : null; }
+function pickLookHandle(e){
+  const p = selected; if (!p) return null; let best = null, bd = 26;
+  p.path.pts.forEach((q, i) => { if (q.look == null) return; tmpV.set(q.x + Math.sin(q.look)*LOOK_R, .05, q.z + Math.cos(q.look)*LOOK_R); const [x, y] = projectTo(tmpV); const d = Math.hypot(x - e.clientX, y - e.clientY); if (d < bd){ bd = d; best = i; } });
+  return best;
+}
+function pickPathPoint(e){
+  const p = selected; if (!p || !p.path.pts.length) return null;
+  let best = null, bd = 30;
+  p.path.pts.forEach((q, i) => { tmpV.set(q.x, .05, q.z); const [x, y] = projectTo(tmpV); const d = Math.hypot(x - e.clientX, y - e.clientY); if (d < bd){ bd = d; best = i; } });
+  return best;
+}
+function hitsPet(e, p){ ndc.set(e.clientX/innerWidth*2-1, -(e.clientY/innerHeight)*2+1); dragRay.setFromCamera(ndc, camera); const ms = []; p.root.traverse(o => { if (o.isMesh) ms.push(o); }); return dragRay.intersectObjects(ms, false).length > 0; }
+addEventListener('pointerdown', e => {
+  if (e.target !== renderer.domElement || D.rec || D.tab !== 'move' || !selected || drag) return;
+  const li = pickLookHandle(e), i = li == null ? pickPathPoint(e) : null;
+  if (li != null) drag = { type:'look', p:selected, i:li, id:e.pointerId, moved:false };
+  else if (i != null) drag = { type:'pt', p:selected, i, id:e.pointerId, moved:false };
+  else if (hitsPet(e, selected)) drag = { type:'pet', p:selected, id:e.pointerId, moved:false };
+  if (!drag) return;
+  e.stopImmediatePropagation(); e.preventDefault();
+  try { renderer.domElement.setPointerCapture(e.pointerId); } catch(err){}
+  if (drag.type==='pt' && selected.labels && selected.labels[i]) selected.labels[i].classList.add('drag');
+}, { capture:true });
+addEventListener('pointermove', e => {
+  if (!drag || e.pointerId !== drag.id) return;
+  const g = groundAt(e); if (!g) return; drag.moved = true;
+  const p = drag.p;
+  if (drag.type === 'look'){
+    const q = p.path.pts[drag.i]; if (Math.hypot(g.x - q.x, g.z - q.z) > .1) q.look = Math.atan2(g.x - q.x, g.z - q.z);
+    if (!dragQueued){ dragQueued = true; requestAnimationFrame(() => { dragQueued = false; pathMarkers(p); }); }
+  } else if (drag.type === 'pt'){
+    const q = p.path.pts[drag.i]; q.x = g.x; q.z = g.z;
+    if (drag.i === 0 && p.actName !== 'path'){ p.x = g.x; p.z = g.z; }
+    if (!dragQueued){ dragQueued = true; requestAnimationFrame(() => { dragQueued = false; pathMarkers(p); if (drag && drag.type==='pt' && p.labels[drag.i]) p.labels[drag.i].classList.add('drag'); }); }
+  } else { p.x = g.x; p.z = g.z; p.locked = true; if (p.actName !== 'idle') p.setAct('idle'); }
+}, { capture:true });
+const endDrag = e => { if (!drag || (e && e.pointerId !== drag.id)) return; const p = drag.p; try { renderer.domElement.releasePointerCapture(drag.id); } catch(err){} drag = null; pathMarkers(p); renderWho(); renderPanel(); };
+addEventListener('pointerup', endDrag, { capture:true }); addEventListener('pointercancel', endDrag, { capture:true });
 
 /* ---------- input ---------- */
 const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
@@ -2589,8 +2673,9 @@ function frame(){
   // real-time clock: low frame rates no longer slow the scene down; big steps are split for smooth motion
   const rdt = Math.min(clock.getDelta(), .5), dt = rdt*D.speed;
   env.up.forEach(f => f(dt, T + dt));
-  const steps = Math.max(1, Math.ceil(dt / (1/40))), h = dt/steps;
+  const steps = Math.min(6, Math.max(1, Math.ceil(dt / (1/40)))), h = dt/steps;
   for (let i=0;i<steps;i++){ T += h; [...pets].forEach(p => p.update(h, T)); }
+  pets.forEach(p => p.keepHeadUp(dt));
   // separation + colliders + bounds (locked pets never get pushed)
   for (let i=0;i<pets.length;i++){
     const a = pets[i];
